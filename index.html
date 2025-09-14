@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>医学报告智能标注工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.9.3/dist/confetti.browser.min.js"></script>
+    <style>
+        /* 自定义样式 */
+        .star {
+            cursor: pointer;
+            color: #d2d6dc; 
+            transition: color 0.2s, transform 0.1s;
+        }
+        .star.hover,
+        .star.selected {
+            color: #f59e0b; 
+        }
+        .star:hover {
+            transform: scale(1.1);
+        }
+
+        .report-content { white-space: pre-wrap; word-break: break-word; }
+        #main-content.hidden { display: none; }
+        #upload-container.hidden { display: none; }
+        .btn-disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .modal.flex {
+            display: flex;
+        }
+
+        @keyframes flash {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.03); }
+        }
+        .flash-animation {
+            animation: flash 0.4s ease-out;
+        }
+
+        .highlight {
+            background-color: #fde047; 
+            font-weight: 600; 
+            padding: 1px 2px;
+            margin: -1px -2px;
+            border-radius: 4px;
+            transition: background-color 0.2s ease-in-out;
+        }
+        .suggestion-item {
+            cursor: pointer;
+            padding: 4px 6px;
+            border-radius: 4px;
+            transition: background-color 0.2s;
+        }
+        .suggestion-item:hover {
+            background-color: #e5e7eb; 
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <div class="container mx-auto max-w-7xl p-4 sm:p-6 lg:p-8">
+        <header class="text-center mb-6">
+            <h1 class="text-3xl md:text-4xl font-bold text-gray-800">放射科报告智能标注工具</h1>
+            <p class="text-gray-600 mt-2">请上传包含映射关系的JSON文件开始标注流程。</p>
+        </header>
+
+        <div id="upload-container" class="text-center py-20 bg-white shadow-xl rounded-2xl border-2 border-dashed border-gray-300 transition-all duration-300">
+            <i class="fas fa-cloud-upload-alt text-6xl text-blue-500"></i>
+            <h2 class="mt-6 text-xl font-semibold text-gray-700">拖拽文件至此 或 点击上传</h2>
+            <p class="text-gray-500 mt-1">请上传需要标注的JSON文件</p>
+            <button id="upload-button" class="mt-6 bg-blue-600 text-white font-bold py-2 px-6 rounded-lg shadow-lg hover:bg-blue-700 transition-all duration-300">
+                选择文件
+            </button>
+            <input type="file" id="file-input" class="hidden" accept=".json">
+        </div>
+
+        <main id="main-content" class="hidden bg-white shadow-xl rounded-2xl">
+            <div class="p-4 md:p-6 border-b">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="text-lg font-semibold text-gray-700">浏览进度</h3>
+                    <span id="progress-text" class="text-gray-600 font-medium">0 / 0</span>
+                </div>
+                <div class="w-full bg-gray-200 rounded-full h-2.5">
+                    <div id="progress-bar" class="bg-blue-600 h-2.5 rounded-full" style="width: 0%"></div>
+                </div>
+                 <div class="flex justify-between items-center mt-4">
+                    <div>
+                        <button id="prev-button" class="bg-gray-200 text-gray-700 font-bold py-2 px-5 rounded-lg hover:bg-gray-300 transition-all">
+                            <i class="fas fa-arrow-left mr-2"></i>上一个
+                        </button>
+                        <button id="next-button" class="ml-2 bg-gray-200 text-gray-700 font-bold py-2 px-5 rounded-lg hover:bg-gray-300 transition-all">
+                            下一个<i class="fas fa-arrow-right ml-2"></i>
+                        </button>
+                    </div>
+                    <button id="download-button" class="bg-green-600 text-white font-bold py-2 px-5 rounded-lg shadow-md hover:bg-green-700 transition-all">
+                        <i class="fas fa-download mr-2"></i>下载标注结果
+                    </button>
+                </div>
+            </div>
+
+            <div class="p-6 md:p-8">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                    <div class="space-y-6">
+                        <div>
+                            <h2 class="text-xl font-semibold text-gray-700 border-b-2 border-blue-500 pb-2 mb-3">原始报告</h2>
+                            <div id="original-report" class="report-content bg-gray-100 p-4 rounded-lg h-64 overflow-y-auto text-gray-800 leading-relaxed"></div>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-semibold text-gray-700 border-b-2 border-blue-500 pb-2 mb-3 flex items-center">
+                                缺陷类型 (True Defects)
+                                <i id="defect-help-icon" class="fas fa-question-circle text-blue-500 ml-2 cursor-pointer hover:text-blue-700" title="查看缺陷类型解释"></i>
+                            </h2>
+                            <div id="defect-types" class="flex flex-wrap gap-2"></div>
+                        </div>
+                        <div>
+                            <h2 class="text-xl font-semibold text-gray-700 border-b-2 border-blue-500 pb-2 mb-3">改进意见</h2>
+                            <div id="suggestions" class="report-content bg-gray-100 p-4 rounded-lg h-48 overflow-y-auto text-gray-800 leading-relaxed"></div>
+                        </div>
+                    </div>
+                    <div class="space-y-6">
+                        <div>
+                            <h2 class="text-xl font-semibold text-gray-700 border-b-2 border-green-500 pb-2 mb-3">改进后的报告</h2>
+                            <div id="improved-report" class="report-content bg-green-50 p-4 rounded-lg h-96 overflow-y-auto text-gray-800 border border-green-200"></div>
+                        </div>
+                        <div id="rating-component" class="bg-blue-50 border border-blue-200 rounded-lg p-6">
+                            <h2 class="text-xl font-semibold text-gray-700 text-center mb-4 flex items-center justify-center">
+                                医生评分
+                                <i id="rating-help-icon" class="fas fa-question-circle text-blue-500 ml-2 cursor-pointer hover:text-blue-700" title="查看评分标准说明"></i>
+                            </h2>
+                            <p class="text-center text-gray-600 mb-1">请根据改进成效打分（5分表示显著成效）</p>
+                            <div id="rating-container" class="flex justify-center items-center text-5xl star-container">
+                                <span class="star" data-value="1">&#9733;</span>
+                                <span class="star" data-value="2">&#9733;</span>
+                                <span class="star" data-value="3">&#9733;</span>
+                                <span class="star" data-value="4">&#9733;</span>
+                                <span class="star" data-value="5">&#9733;</span>
+                            </div>
+                            <p id="rating-feedback" class="text-center text-blue-700 font-semibold mt-3 h-6"></p>
+                            <textarea id="comment-textarea" class="mt-4 w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-300 focus:border-blue-500 transition" rows="3" placeholder="请输入您的评论或建议... (可选)"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="defect-help-modal" class="modal fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center p-4 z-50 transition-opacity duration-300">
+        <div class="bg-white rounded-lg shadow-xl max-w-2xl w-full max-h-[80vh] flex flex-col">
+            <div class="p-5 border-b flex justify-between items-center sticky top-0 bg-white">
+                <h2 class="text-2xl font-bold text-gray-800">缺陷类型详细解释</h2>
+                <button id="close-defect-modal-button" class="text-gray-400 hover:text-gray-800 text-3xl font-light leading-none">&times;</button>
+            </div>
+            <div class="p-6 space-y-4 overflow-y-auto" id="defect-modal-content-body"></div>
+        </div>
+    </div>
+
+    <div id="rating-help-modal" class="modal fixed inset-0 bg-black bg-opacity-60 hidden items-center justify-center p-4 z-50 transition-opacity duration-300">
+        <div class="bg-white rounded-lg shadow-xl max-w-lg w-full max-h-[80vh] flex flex-col">
+            <div class="p-5 border-b flex justify-between items-center sticky top-0 bg-white">
+                <h2 class="text-2xl font-bold text-gray-800">医生评分标准</h2>
+                <button id="close-rating-modal-button" class="text-gray-400 hover:text-gray-800 text-3xl font-light leading-none">&times;</button>
+            </div>
+            <div class="p-6 space-y-4 overflow-y-auto" id="rating-modal-content-body"></div>
+        </div>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const ratingComponent = document.getElementById('rating-component');
+        const uploadContainer = document.getElementById('upload-container');
+        const mainContent = document.getElementById('main-content');
+        const uploadButton = document.getElementById('upload-button');
+        const fileInput = document.getElementById('file-input');
+        const prevButton = document.getElementById('prev-button');
+        const nextButton = document.getElementById('next-button');
+        const downloadButton = document.getElementById('download-button');
+        const progressBar = document.getElementById('progress-bar');
+        const progressText = document.getElementById('progress-text');
+        const originalReportEl = document.getElementById('original-report');
+        const defectTypesEl = document.getElementById('defect-types');
+        const suggestionsEl = document.getElementById('suggestions');
+        const improvedReportEl = document.getElementById('improved-report');
+        const stars = document.querySelectorAll('.star');
+        const ratingContainer = document.getElementById('rating-container');
+        const ratingFeedback = document.getElementById('rating-feedback');
+        const commentTextarea = document.getElementById('comment-textarea');
+        const defectHelpIcon = document.getElementById('defect-help-icon');
+        const defectHelpModal = document.getElementById('defect-help-modal');
+        const closeDefectModalButton = document.getElementById('close-defect-modal-button');
+        const defectModalContentBody = document.getElementById('defect-modal-content-body');
+        const ratingHelpIcon = document.getElementById('rating-help-icon');
+        const ratingHelpModal = document.getElementById('rating-help-modal');
+        const closeRatingModalButton = document.getElementById('close-rating-modal-button');
+        const ratingModalContentBody = document.getElementById('rating-modal-content-body');
+
+        let allReportsData = [];
+        let originalJsonData = {}; 
+        let currentIndex = 0;
+
+        const feedbackMessages = { 1: '改进效果不佳', 2: '改进效果有限', 3: '有一定改进', 4: '改进效果较好', 5: '有显著的修改成效' };
+        const defectExplanations = {
+            "A. 结构与完整性缺陷": { "A1_missing_sections": "缺少标准章节（如检查技术、影像所⻅、诊断意⻅等）", "A2_inadequate_technique": "检查技术描述不充分（缺少对⽐剂信息、扫描参数等）", "A3_inadequate_comparison": "未与既往检查对⽐", "A4_missing_systematic_description": "系统性描述遗漏（未按器官系统完整描述）" },
+            "B. 影像所⻅描述缺陷": { "B1_brief_key_descriptors": "关键信息描述过于简略（病灶⼤⼩、形态、密度等）", "B2_missing_negative_findings": "重要阴性结果遗漏", "B3_vague_terminology": "术语模糊或⾮标准化（如'⼤致正常'、'尚可'等）", "B4_measurement_errors": "测量错误或缺失关键测量", "B5_inadequate_incidentalomas": "偶发瘤描述不当或遗漏" },
+            "C. 诊断意⻅缺陷": { "C1_inconsistent_impression": "诊断意⻅与影像所⻅不符", "C2_missing_key_findings": "关键阳性发现未在诊断意⻅中总结", "C3_lack_synthesis": "缺乏综合分析和临床关联", "C4_vague_recommendations": "建议不明确或不可操作", "C5_improper_prioritization": "诊断意⻅排序不当" },
+            "D. 整体质量缺陷": { "D1_poor_clarity": "逻辑流程混乱", "D2_contradictions": "前后描述⽭盾", "D3_grammar_errors": "语法、拼写或格式错误" }
+        };
+        const ratingExplanations = { "5星 (显著成效)": "改进效果显著，报告质量大幅提升，几乎达到可直接发布的标准。", "4星 (效果较好)": "改进效果较好，报告的核心缺陷得到修正，表达更清晰、专业。", "3星 (一定改进)": "有一定改进，报告质量有提升，但仍有可优化空间。", "2星 (效果有限)": "改进有限，仍存在明显缺陷，或修改建议不切实际。", "1星 (效果不佳)": "改进后的报告质量甚至低于原始报告，或引入了新的严重错误。" };
+
+        populateDefectHelpModal();
+        populateRatingHelpModal();
+
+        uploadButton.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', handleFileUpload);
+        uploadContainer.addEventListener('dragover', (e) => { e.preventDefault(); uploadContainer.classList.add('border-blue-500', 'bg-blue-50'); });
+        uploadContainer.addEventListener('dragleave', () => { uploadContainer.classList.remove('border-blue-500', 'bg-blue-50'); });
+        uploadContainer.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadContainer.classList.remove('border-blue-500', 'bg-blue-50');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) { fileInput.files = files; handleFileUpload({ target: fileInput }); }
+        });
+        prevButton.addEventListener('click', navigateToPrevious);
+        nextButton.addEventListener('click', navigateToNext);
+        downloadButton.addEventListener('click', downloadResults);
+        ratingContainer.addEventListener('mouseleave', () => { 
+            const savedRating = allReportsData[currentIndex]?.rating;
+            updateStarsUI(savedRating);
+            ratingFeedback.textContent = savedRating ? feedbackMessages[savedRating] : '';
+        });
+        stars.forEach(star => {
+            star.addEventListener('mouseover', () => { 
+                const hoverValue = parseInt(star.dataset.value, 10);
+                updateStarsUI(hoverValue, true);
+                ratingFeedback.textContent = feedbackMessages[hoverValue] || '';
+            });
+            star.addEventListener('click', (event) => {
+                const rating = parseInt(star.dataset.value, 10);
+                saveRating(rating);
+                updateStarsUI(rating);
+                ratingFeedback.textContent = feedbackMessages[rating] || '';
+                ratingComponent.classList.remove('flash-animation');
+                void ratingComponent.offsetWidth;
+                ratingComponent.classList.add('flash-animation');
+                triggerFireworks(event);
+            });
+        });
+        
+        suggestionsEl.addEventListener('mouseover', (e) => {
+            const target = e.target.closest('.suggestion-item');
+            if (target && target.dataset.targetSnippets) {
+                const snippets = JSON.parse(target.dataset.targetSnippets);
+                highlightTextInOriginal(snippets, true);
+            }
+        });
+
+        suggestionsEl.addEventListener('mouseout', (e) => {
+            const target = e.target.closest('.suggestion-item');
+            if (target && target.dataset.targetSnippets) {
+                highlightTextInOriginal(null, false);
+            }
+        });
+
+        defectHelpIcon.addEventListener('click', () => openModal(defectHelpModal));
+        closeDefectModalButton.addEventListener('click', () => closeModal(defectHelpModal));
+        defectHelpModal.addEventListener('click', (e) => { if (e.target === defectHelpModal) closeModal(defectHelpModal); });
+        ratingHelpIcon.addEventListener('click', () => openModal(ratingHelpModal));
+        closeRatingModalButton.addEventListener('click', () => closeModal(ratingHelpModal));
+        ratingHelpModal.addEventListener('click', (e) => { if (e.target === ratingHelpModal) closeModal(ratingHelpModal); });
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file || file.type !== 'application/json') { alert('请上传有效的JSON文件。'); return; }
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (!data.detailed_results || !Array.isArray(data.detailed_results)) throw new Error('JSON文件格式不正确，缺少 "detailed_results" 数组。');
+                    originalJsonData = data;
+                    allReportsData = data.detailed_results.map(item => ({ ...item, rating: null, comment: "" }));
+                    currentIndex = 0;
+                    startAnnotation();
+                } catch (error) { alert(`解析JSON文件失败: ${error.message}`); }
+            };
+            reader.readAsText(file);
+        }
+
+        function startAnnotation() {
+            uploadContainer.classList.add('hidden');
+            mainContent.classList.remove('hidden');
+            renderCurrentReport();
+        }
+
+        function renderCurrentReport() {
+            if (allReportsData.length === 0) return;
+            const report = allReportsData[currentIndex];
+            const { suggestions, improved_report } = parseOptimizedOutput(report.optimized_output);
+            
+            originalReportEl.textContent = report.original_report || '无内容';
+            improvedReportEl.textContent = improved_report;
+
+            const suggestionItems = suggestions.split(/(\n- |\n• |\n\d+\. )/).filter(s => s.trim() && !s.match(/(\n- |\n• |\n\d+\. )/));
+            suggestionsEl.innerHTML = suggestionItems.map(itemText => {
+                const mapping = report.mappings?.find(m => itemText.includes(m.suggestion));
+                if (mapping && mapping.original_text_snippets) {
+                    const snippetsJson = JSON.stringify(mapping.original_text_snippets);
+                    return `<div class="suggestion-item" data-target-snippets='${snippetsJson}'>- ${itemText}</div>`;
+                }
+                return `<div class="suggestion-item">- ${itemText}</div>`;
+            }).join('');
+            
+            defectTypesEl.innerHTML = '';
+            if (report.true_defects && Array.isArray(report.true_defects)) {
+                report.true_defects.forEach(defect => {
+                    const span = document.createElement('span');
+                    span.className = 'bg-red-100 text-red-800 text-sm font-medium mr-2 px-2.5 py-0.5 rounded-full';
+                    span.textContent = defect;
+                    defectTypesEl.appendChild(span);
+                });
+            }
+            updateProgressBar();
+            updateNavigationButtons();
+            const currentRating = report.rating;
+            updateStarsUI(currentRating);
+            ratingFeedback.textContent = currentRating ? feedbackMessages[currentRating] : '';
+            commentTextarea.value = report.comment || '';
+        }
+
+        function highlightTextInOriginal(snippets, shouldHighlight) {
+            let content = allReportsData[currentIndex].original_report || '无内容';
+            if (shouldHighlight && snippets && snippets.length > 0) {
+                snippets.forEach(snippet => {
+                    if (typeof snippet !== 'string' || snippet.trim() === '') return;
+                    const escapedText = snippet.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                    const regex = new RegExp(escapedText, 'g');
+                    content = content.replace(regex, `<span class="highlight">${snippet}</span>`);
+                });
+                originalReportEl.innerHTML = content;
+            } else {
+                originalReportEl.textContent = content;
+            }
+        }
+
+        function parseOptimizedOutput(output) {
+            if (typeof output !== 'string') return { suggestions: '解析错误', improved_report: '解析错误' };
+            const suggestionsMatch = output.match(/\*\*具体修改建议：\*\*([\s\S]*?)(?=\n\n\*\*改进后的报告示例：\*\*|\n\n\*\*总结\*\*|$)/);
+            const improvedReportMatch = output.match(/\*\*改进后的报告示例：\*\*\n([\s\S]*)/);
+            const suggestions = suggestionsMatch ? suggestionsMatch[1].trim() : '未找到改进意见';
+            const improved_report = improvedReportMatch ? improvedReportMatch[1].split('```')[0].trim() : '未找到改进后的报告';
+            return { suggestions, improved_report };
+        }
+
+        function updateProgressBar() {
+            const total = allReportsData.length;
+            if (total === 0) { progressText.textContent = `0 / 0`; progressBar.style.width = '0%'; return; }
+            const currentPosition = currentIndex + 1;
+            const percentage = (currentPosition / total) * 100;
+            progressBar.style.width = `${percentage}%`;
+            progressText.textContent = `${currentPosition} / ${total}`;
+        }
+
+        function updateNavigationButtons() {
+            prevButton.disabled = currentIndex === 0;
+            nextButton.disabled = currentIndex === allReportsData.length - 1;
+            prevButton.classList.toggle('btn-disabled', prevButton.disabled);
+            nextButton.classList.toggle('btn-disabled', nextButton.disabled);
+        }
+
+        function updateStarsUI(rating, isHover = false) {
+             stars.forEach(star => {
+                const starValue = parseInt(star.dataset.value, 10);
+                const shouldBeLit = starValue <= rating;
+                star.classList.toggle(isHover ? 'hover' : 'selected', shouldBeLit);
+                if (!isHover) star.classList.remove('hover');
+            });
+        }
+        
+        function saveCurrentData() {
+            if (allReportsData.length > 0) {
+                allReportsData[currentIndex].comment = commentTextarea.value.trim();
+            }
+        }
+        
+        function saveRating(rating) {
+            if (allReportsData.length > 0) { 
+                allReportsData[currentIndex].rating = rating; 
+            }
+        }
+
+        function navigateToPrevious() {
+            if (currentIndex > 0) { saveCurrentData(); currentIndex--; renderCurrentReport(); }
+        }
+
+        function navigateToNext() {
+            if (currentIndex < allReportsData.length - 1) { saveCurrentData(); currentIndex++; renderCurrentReport(); }
+        }
+
+        function downloadResults() {
+            if (allReportsData.length === 0) { alert('没有可下载的数据。'); return; }
+            saveCurrentData();
+            const finalData = { ...originalJsonData };
+            finalData.detailed_results = allReportsData.map(({ rating, comment, ...originalReport }) => ({...originalReport, rating, comment }));
+            const dataStr = JSON.stringify(finalData, null, 2);
+            const dataBlob = new Blob([dataStr], { type: 'application/json' });
+            const url = URL.createObjectURL(dataBlob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = 'annotated_results.json';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            URL.revokeObjectURL(url);
+        }
+        
+        function triggerFireworks(event) {
+            const rect = event.target.getBoundingClientRect();
+            const x = (rect.left + rect.right) / 2;
+            const y = (rect.top + rect.bottom) / 2;
+            const origin = { x: x / window.innerWidth, y: y / window.innerHeight };
+            confetti({ particleCount: 100, spread: 70, origin: origin, colors: ['#f59e0b', '#facc15', '#ffffff'] });
+        }
+
+        function populateDefectHelpModal() {
+            let html = '';
+            for (const category in defectExplanations) {
+                html += `<h3 class="text-lg font-semibold text-gray-700 mt-3 first:mt-0 border-b pb-1">${category}</h3><dl class="mt-2">`;
+                for (const code in defectExplanations[category]) {
+                    html += `<dt class="font-bold text-gray-900">${code}</dt><dd class="ml-4 mb-2 text-gray-600">${defectExplanations[category][code]}</dd>`;
+                }
+                html += '</dl>';
+            }
+            defectModalContentBody.innerHTML = html;
+        }
+
+        function populateRatingHelpModal() {
+            let html = '<dl class="space-y-3">';
+            for(const title in ratingExplanations) {
+                html += `<div><dt class="font-bold text-gray-900">${title}</dt><dd class="ml-4 text-gray-600">${ratingExplanations[title]}</dd></div>`;
+            }
+            html += '</dl>';
+            ratingModalContentBody.innerHTML = html;
+        }
+
+        function openModal(modal) { modal.classList.remove('hidden'); modal.classList.add('flex'); }
+        function closeModal(modal) { modal.classList.add('hidden'); modal.classList.remove('flex'); }
+    });
+    </script>
+</body>
+</html>
